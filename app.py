@@ -22,7 +22,7 @@ SYSTEM_PROMPT = """Você é um Entrevistador SBMN. Siga EXATAMENTE este protocol
 
 FASE 1 (3 perguntas obrigatórias):
 1. "Qual é o nome do processo que vamos modelar?"
-2. "Qual é o setor ou área de aplicação deste processo?"
+2. "Qual é o setor ou área de aplicação deste processo?"  
 3. "Liste as principais atividades que compõem este processo, do início ao fim. Separe por vírgulas."
 
 FASE 2 (perguntas sobre relações):
@@ -60,7 +60,9 @@ REGRAS:
 - Faça UMA pergunta por vez
 - Perguntas CURTAS e OBJETIVAS
 - Use SIM/NÃO sempre que possível
-- NÃO peça esclarecimentos desnecessários"""
+- NÃO peça esclarecimentos desnecessários
+
+Confirme que entendeu respondendo apenas: 'Olá! Sou o Entrevistador SBMN v6. Vamos começar?'"""
 
 # Configurar API
 try:
@@ -98,19 +100,30 @@ if model is None:
 # Inicializar sessão
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.chat = None
-    # Primeira mensagem com instruções do sistema
-    st.session_state.messages.append({
-        "role": "user", 
-        "content": SYSTEM_PROMPT + "\n\nConfirme que entendeu respondendo: 'Olá! Sou o Entrevistador SBMN v6. Vamos começar?'"
-    })
-    # Iniciar chat e obter primeira resposta
     st.session_state.chat = model.start_chat()
-    response = st.session_state.chat.send_message(st.session_state.messages[0]["content"])
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": response.text
-    })
+    st.session_state.initialized = False
+
+# Inicializar conversa com SYSTEM_PROMPT (apenas uma vez)
+if not st.session_state.initialized:
+    try:
+        # Enviar SYSTEM_PROMPT
+        response = st.session_state.chat.send_message(SYSTEM_PROMPT)
+
+        # Tentar obter o texto da resposta
+        try:
+            response_text = response.text
+        except:
+            # Se falhar, usar mensagem padrão
+            response_text = "Olá! Sou o Entrevistador SBMN v6. Vamos começar?"
+
+        # Adicionar ao histórico (mas não mostrar o SYSTEM_PROMPT)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": response_text
+        })
+        st.session_state.initialized = True
+    except Exception as e:
+        st.error(f"Erro ao inicializar: {str(e)}")
 
 # Função para salvar no Google Sheets
 def save_to_sheets(conversation_data):
@@ -128,16 +141,13 @@ def save_to_sheets(conversation_data):
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Filtrar mensagens do usuário (excluindo a primeira com o SYSTEM_PROMPT)
-        filtered_msgs = [msg for i, msg in enumerate(conversation_data) if i > 0]
-
         full_conversation = "\n\n".join([
             f"{msg['role'].upper()}: {msg['content']}" 
-            for msg in filtered_msgs
+            for msg in conversation_data
         ])
 
         sbmn_model = ""
-        for msg in reversed(filtered_msgs):
+        for msg in reversed(conversation_data):
             if "MODELO SBMN" in msg['content']:
                 sbmn_model = msg['content']
                 break
@@ -150,11 +160,10 @@ def save_to_sheets(conversation_data):
         st.error(f"Erro ao salvar: {str(e)}")
         return False
 
-# Exibir histórico (exceto primeira mensagem com SYSTEM_PROMPT)
-for i, message in enumerate(st.session_state.messages):
-    if i > 0:  # Pular a primeira mensagem (SYSTEM_PROMPT)
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# Exibir histórico
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
 # Input do usuário
 if prompt := st.chat_input("Digite sua resposta aqui..."):
@@ -168,7 +177,14 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
         with st.spinner("Pensando..."):
             try:
                 response = st.session_state.chat.send_message(prompt)
-                response_text = response.text
+
+                # Tentar obter texto com tratamento de erro
+                try:
+                    response_text = response.text
+                except:
+                    # Se falhar ao obter texto, usar resposta alternativa
+                    response_text = "Desculpe, ocorreu um erro ao processar a resposta. Pode reformular?"
+
                 st.markdown(response_text)
             except Exception as e:
                 response_text = f"Erro: {str(e)}"
@@ -187,7 +203,8 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
 # Botão reiniciar
 if st.button("🔄 Reiniciar Entrevista"):
     st.session_state.messages = []
-    st.session_state.chat = None
+    st.session_state.chat = model.start_chat()
+    st.session_state.initialized = False
     st.rerun()
 
 # Sidebar
@@ -195,12 +212,11 @@ with st.sidebar:
     st.markdown("### 📋 Sobre")
     st.markdown("Entrevistador para modelagem SBMN de processos.")
     st.markdown("### 📊 Status")
-    # Subtrair 1 da contagem (não contar SYSTEM_PROMPT)
-    msg_count = max(0, len(st.session_state.messages) - 1)
-    st.metric("Mensagens", msg_count)
+    st.metric("Mensagens", len(st.session_state.messages))
 
     st.markdown("---")
     if st.button("Limpar Histórico"):
         st.session_state.messages = []
-        st.session_state.chat = None
+        st.session_state.chat = model.start_chat()
+        st.session_state.initialized = False
         st.rerun()
