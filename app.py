@@ -17,83 +17,52 @@ st.title("🎯 Entrevistador SBMN v6")
 st.markdown("*Assistente especializado em modelagem SBMN para processos de negócio*")
 st.markdown("---")
 
-# Prompt do sistema (seu prompt SBMN v6)
-SYSTEM_PROMPT = """Você é um Analista de Processos de Negócio especializado em SBMN. 
+# Prompt do sistema condensado
+SYSTEM_PROMPT = """Você é um Entrevistador SBMN. Siga EXATAMENTE este protocolo:
 
-IMPORTANTE: Siga RIGOROSAMENTE este protocolo:
+FASE 1 (3 perguntas obrigatórias):
+1. "Qual é o nome do processo que vamos modelar?"
+2. "Qual é o setor ou área de aplicação deste processo?"
+3. "Liste as principais atividades que compõem este processo, do início ao fim. Separe por vírgulas."
 
-FASE 1 - COLETA INICIAL (3 perguntas sequenciais):
-1. Pergunte: "Qual é o nome do processo que vamos modelar?"
-2. Depois, pergunte: "Qual é o setor ou área de aplicação deste processo?"
-3. Por último, pergunte: "Liste as principais atividades e eventos que compõem este processo, do início ao fim. Separe por vírgulas."
-
-FASE 2 - PERGUNTAS SOBRE DEPENDÊNCIAS:
-Após receber a lista de atividades, faça perguntas OBJETIVAS SIM/NÃO sobre as relações entre pares de atividades.
-
+FASE 2 (perguntas sobre relações):
 Para cada par de atividades [A] e [B], pergunte:
 
-PERGUNTA TIPO 1 (Dependência):
-"A atividade '[B]' precisa esperar '[A]' terminar para poder começar? Responda: SIM ou NÃO"
+"A atividade '[B]' precisa esperar '[A]' terminar para começar? Responda: SIM ou NÃO"
 
-Se SIM, pergunte:
-"A atividade '[A]' SEMPRE acontece neste processo, ou ela é OPCIONAL? Responda: SEMPRE ou OPCIONAL"
-- SEMPRE = B DEP A (Dependência Estrita)
-- OPCIONAL = B DEPC A (Dependência Circunstancial)
+Se SIM: "A atividade '[A]' SEMPRE acontece ou é OPCIONAL? Responda: SEMPRE ou OPCIONAL"
+- SEMPRE = B DEP A
+- OPCIONAL = B DEPC A
 
-Se NÃO na pergunta de dependência, pergunte:
+Se NÃO: "As atividades '[A]' e '[B]' podem acontecer JUNTAS? Responda: SIM ou NÃO"
+- NÃO = A XOR B
+- SIM: "É OBRIGATÓRIO que pelo menos uma aconteça? Responda: APENAS A | APENAS B | AMBAS | NENHUMA"
 
-PERGUNTA TIPO 2 (Exclusividade):
-"As atividades '[A]' e '[B]' podem acontecer JUNTAS na mesma execução do processo? Responda: SIM ou NÃO"
-- NÃO = A XOR B (são mutuamente exclusivas)
-- SIM = continue para próxima pergunta
-
-PERGUNTA TIPO 3 (União):
-"No processo, é OBRIGATÓRIO que pelo menos UMA das atividades ('[A]' OU '[B]') aconteça? Responda: APENAS A | APENAS B | AMBAS | NENHUMA"
-- APENAS A = A UNI B (A é obrigatória)
-- APENAS B = B UNI A (B é obrigatória)
-- AMBAS = A UNI B (ambas obrigatórias)
-- NENHUMA = sem relação especial
-
-FASE 3 - APRESENTAÇÃO:
-Após mapear todas as relações, apresente o MODELO SBMN no formato:
-
+FASE 3 (apresentação):
+Apresente o modelo no formato:
 ═══════════════════════════════════════════════════
-MODELO SBMN: [Nome do Processo]
-Setor: [Setor]
-Data: [Data]
+MODELO SBMN: [nome]
+Setor: [setor]
 ═══════════════════════════════════════════════════
 
 📋 DOMÍNIO (AFOs):
-A = [nome da atividade]
-B = [nome da atividade]
-...
+A = [atividade]
+B = [atividade]
 
 🔗 SITUAÇÕES IDENTIFICADAS:
-
-DEP (Dependências Estritas):
-• [listar]
-
-DEPC (Dependências Circunstanciais):
-• [listar]
-
-XOR (Não-Coexistências):
-• [listar]
-
-UNI (Uniões Inclusivas):
-• [listar]
-
+DEP: [lista]
+DEPC: [lista]
+XOR: [lista]
+UNI: [lista]
 ═══════════════════════════════════════════════════
 
-REGRAS CRÍTICAS:
-- Faça perguntas CURTAS e OBJETIVAS
-- UMA pergunta por vez
-- Aguarde resposta antes da próxima pergunta
-- Use formato SIM/NÃO sempre que possível
-- NÃO faça perguntas abertas ou explicativas
-- NÃO peça esclarecimentos desnecessários
-- FOQUE apenas nas 3 perguntas iniciais e depois nas perguntas de dependência"""
+REGRAS:
+- Faça UMA pergunta por vez
+- Perguntas CURTAS e OBJETIVAS
+- Use SIM/NÃO sempre que possível
+- NÃO peça esclarecimentos desnecessários"""
 
-# Configurar a API do Gemini
+# Configurar API
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
@@ -101,21 +70,20 @@ except Exception as e:
     st.error(f"⚠️ Erro ao configurar a API: {str(e)}")
     st.stop()
 
-# Inicializar o modelo com system instruction
+# Inicializar modelo
 @st.cache_resource
 def get_model():
     try:
         generation_config = {
-            "temperature": 0.3,  # Reduzida para maior precisão
+            "temperature": 0.3,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 2048,  # Reduzida para respostas mais diretas
+            "max_output_tokens": 2048,
         }
 
         model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
-            generation_config=generation_config,
-            system_instruction=SYSTEM_PROMPT
+            generation_config=generation_config
         )
         return model
     except Exception as e:
@@ -125,18 +93,23 @@ def get_model():
 model = get_model()
 
 if model is None:
-    st.error("Não foi possível inicializar o modelo. Verifique as configurações.")
     st.stop()
 
-# Inicializar histórico de conversa
+# Inicializar sessão
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.chat = model.start_chat(history=[])
-    # Mensagem inicial
-    initial_message = "Olá! Sou o Entrevistador SBMN v6. Vou conduzi-lo através de uma entrevista estruturada para modelar seu processo de negócio. Vamos começar?"
+    st.session_state.chat = None
+    # Primeira mensagem com instruções do sistema
     st.session_state.messages.append({
-        "role": "assistant", 
-        "content": initial_message
+        "role": "user", 
+        "content": SYSTEM_PROMPT + "\n\nConfirme que entendeu respondendo: 'Olá! Sou o Entrevistador SBMN v6. Vamos começar?'"
+    })
+    # Iniciar chat e obter primeira resposta
+    st.session_state.chat = model.start_chat()
+    response = st.session_state.chat.send_message(st.session_state.messages[0]["content"])
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": response.text
     })
 
 # Função para salvar no Google Sheets
@@ -155,13 +128,16 @@ def save_to_sheets(conversation_data):
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Filtrar mensagens do usuário (excluindo a primeira com o SYSTEM_PROMPT)
+        filtered_msgs = [msg for i, msg in enumerate(conversation_data) if i > 0]
+
         full_conversation = "\n\n".join([
             f"{msg['role'].upper()}: {msg['content']}" 
-            for msg in conversation_data
+            for msg in filtered_msgs
         ])
 
         sbmn_model = ""
-        for msg in reversed(conversation_data):
+        for msg in reversed(filtered_msgs):
             if "MODELO SBMN" in msg['content']:
                 sbmn_model = msg['content']
                 break
@@ -174,10 +150,11 @@ def save_to_sheets(conversation_data):
         st.error(f"Erro ao salvar: {str(e)}")
         return False
 
-# Exibir histórico
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# Exibir histórico (exceto primeira mensagem com SYSTEM_PROMPT)
+for i, message in enumerate(st.session_state.messages):
+    if i > 0:  # Pular a primeira mensagem (SYSTEM_PROMPT)
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
 # Input do usuário
 if prompt := st.chat_input("Digite sua resposta aqui..."):
@@ -186,7 +163,7 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Obter resposta do modelo
+    # Obter resposta
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
             try:
@@ -194,35 +171,36 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
                 response_text = response.text
                 st.markdown(response_text)
             except Exception as e:
-                response_text = f"Erro ao obter resposta: {str(e)}"
+                response_text = f"Erro: {str(e)}"
                 st.error(response_text)
 
     # Adicionar resposta ao histórico
     st.session_state.messages.append({"role": "assistant", "content": response_text})
 
-    # Verificar se a entrevista foi concluída
+    # Verificar se concluiu
     if "MODELO SBMN" in response_text and "═══════════" in response_text:
         with st.spinner("Salvando entrevista..."):
             if save_to_sheets(st.session_state.messages):
                 st.success("✅ Entrevista salva com sucesso!")
                 st.balloons()
 
-# Botão para reiniciar
+# Botão reiniciar
 if st.button("🔄 Reiniciar Entrevista"):
     st.session_state.messages = []
-    st.session_state.chat = model.start_chat(history=[])
+    st.session_state.chat = None
     st.rerun()
 
 # Sidebar
 with st.sidebar:
     st.markdown("### 📋 Sobre")
-    st.markdown("Este entrevistador usa IA para modelar processos de negócio na notação SBMN.")
+    st.markdown("Entrevistador para modelagem SBMN de processos.")
     st.markdown("### 📊 Status")
-    st.metric("Mensagens trocadas", len(st.session_state.messages))
+    # Subtrair 1 da contagem (não contar SYSTEM_PROMPT)
+    msg_count = max(0, len(st.session_state.messages) - 1)
+    st.metric("Mensagens", msg_count)
 
     st.markdown("---")
-    st.markdown("### ⚙️ Configuração")
     if st.button("Limpar Histórico"):
         st.session_state.messages = []
-        st.session_state.chat = model.start_chat(history=[])
+        st.session_state.chat = None
         st.rerun()
