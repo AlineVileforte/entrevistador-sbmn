@@ -17,14 +17,6 @@ st.title("🎯 Entrevistador SBMN v6")
 st.markdown("*Assistente especializado em modelagem SBMN para processos de negócio*")
 st.markdown("---")
 
-# Configurar a API do Gemini
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
-except:
-    st.error("⚠️ Erro ao configurar a API. Verifique as configurações.")
-    st.stop()
-
 # Prompt do sistema (seu prompt SBMN v6)
 SYSTEM_PROMPT = """
 IDENTIDADE E PAPEL
@@ -396,23 +388,54 @@ D
 
 """
 
+# Configurar a API do Gemini
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=GEMINI_API_KEY)
+except Exception as e:
+    st.error(f"⚠️ Erro ao configurar a API: {str(e)}")
+    st.stop()
+
 # Inicializar o modelo
 @st.cache_resource
 def get_model():
-    return genai.GenerativeModel(
-        model_name='gemini-1.5-pro',
-        system_instruction=SYSTEM_PROMPT
-    )
+    try:
+        generation_config = {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 8192,
+        }
+
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-pro',
+            generation_config=generation_config,
+        )
+        return model
+    except Exception as e:
+        st.error(f"Erro ao criar modelo: {str(e)}")
+        return None
 
 model = get_model()
+
+if model is None:
+    st.error("Não foi possível inicializar o modelo. Verifique as configurações.")
+    st.stop()
 
 # Inicializar histórico de conversa
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.chat = model.start_chat(history=[])
-    # Mensagem inicial
+    # Mensagem inicial do sistema
+    st.session_state.messages.append({
+        "role": "system", 
+        "content": SYSTEM_PROMPT
+    })
+    # Mensagem inicial para o usuário
     initial_message = "Olá! Sou o Entrevistador SBMN v6. Vou conduzi-lo através de uma entrevista estruturada para modelar seu processo de negócio. Vamos começar?"
-    st.session_state.messages.append({"role": "assistant", "content": initial_message})
+    st.session_state.messages.append({
+        "role": "assistant", 
+        "content": initial_message
+    })
 
 # Função para salvar no Google Sheets
 def save_to_sheets(conversation_data):
@@ -433,15 +456,18 @@ def save_to_sheets(conversation_data):
         # Preparar dados
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Filtrar apenas mensagens user/assistant (não incluir system)
+        filtered_msgs = [msg for msg in conversation_data if msg['role'] != 'system']
+
         # Extrair informações
         full_conversation = "\n\n".join([
             f"{msg['role'].upper()}: {msg['content']}" 
-            for msg in conversation_data
+            for msg in filtered_msgs
         ])
 
-        # Encontrar o modelo SBMN final (última mensagem que contém "MODELO SBMN")
+        # Encontrar o modelo SBMN final
         sbmn_model = ""
-        for msg in reversed(conversation_data):
+        for msg in reversed(filtered_msgs):
             if "MODELO SBMN" in msg['content']:
                 sbmn_model = msg['content']
                 break
@@ -455,10 +481,11 @@ def save_to_sheets(conversation_data):
         st.error(f"Erro ao salvar: {str(e)}")
         return False
 
-# Exibir histórico de mensagens
+# Exibir histórico (apenas user/assistant)
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if message["role"] != "system":
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
 # Input do usuário
 if prompt := st.chat_input("Digite sua resposta aqui..."):
@@ -467,17 +494,37 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Preparar histórico para o modelo (formato Gemini)
+    chat_history = []
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            chat_history.append({
+                "role": "user",
+                "parts": [msg["content"]]
+            })
+        elif msg["role"] == "assistant":
+            chat_history.append({
+                "role": "model",
+                "parts": [msg["content"]]
+            })
+
     # Obter resposta do modelo
     with st.chat_message("assistant"):
         with st.spinner("Pensando..."):
-            response = st.session_state.chat.send_message(prompt)
-            response_text = response.text
-            st.markdown(response_text)
+            try:
+                # Criar chat com histórico
+                chat = model.start_chat(history=chat_history[:-1])  # Não incluir última mensagem do usuário
+                response = chat.send_message(prompt)
+                response_text = response.text
+                st.markdown(response_text)
+            except Exception as e:
+                response_text = f"Erro ao obter resposta: {str(e)}"
+                st.error(response_text)
 
     # Adicionar resposta ao histórico
     st.session_state.messages.append({"role": "assistant", "content": response_text})
 
-    # Verificar se a entrevista foi concluída (contém "MODELO SBMN")
+    # Verificar se a entrevista foi concluída
     if "MODELO SBMN" in response_text and "═══════════" in response_text:
         with st.spinner("Salvando entrevista..."):
             if save_to_sheets(st.session_state.messages):
@@ -487,7 +534,6 @@ if prompt := st.chat_input("Digite sua resposta aqui..."):
 # Botão para reiniciar
 if st.button("🔄 Reiniciar Entrevista"):
     st.session_state.messages = []
-    st.session_state.chat = model.start_chat(history=[])
     st.rerun()
 
 # Informações no sidebar
@@ -495,4 +541,10 @@ with st.sidebar:
     st.markdown("### 📋 Sobre")
     st.markdown("Este entrevistador usa IA para modelar processos de negócio na notação SBMN.")
     st.markdown("### 📊 Status")
-    st.metric("Mensagens trocadas", len(st.session_state.messages))
+    st.metric("Mensagens trocadas", len([m for m in st.session_state.messages if m['role'] != 'system']))
+
+    st.markdown("---")
+    st.markdown("### ⚙️ Configuração")
+    if st.button("Limpar Histórico"):
+        st.session_state.messages = []
+        st.rerun()
